@@ -1,15 +1,19 @@
 --- a/netlink/Makefile
 +++ b/netlink/Makefile
-@@ -1,5 +1,6 @@
+@@ -1,8 +1,9 @@
 +GRE_ENABLED := $(strip $(if $(filter $(gre), y), 1 , 0))
  CAPWAP_ENABLED := $(strip $(if $(filter $(capwapmgr), y), 1 , 0))
 -IPSEC_ENABLED := $(strip $(if $(filter $(ipsecmgr), y), 1 , 0))
 +IPSEC_ENABLED := 0
  DTLS_ENABLED := $(strip $(if $(filter $(dtlsmgr), y), 1 , 0))
- 
- ccflags-y := -Werror
-@@ -10,44 +11,39 @@ ccflags-y += -DNSS_CLIENT_BUILD_ID="$(BU
- 
+
+-ccflags-y := -Wall -Werror
++ccflags-y := -Werror
+ ccflags-y += -I$(obj)/include
+ ccflags-y += -I$(obj)/../exports
+ ccflags-y += -DNSS_NL_DEBUG_LEVEL=4
+@@ -10,48 +11,39 @@ ccflags-y += -DNSS_CLIENT_BUILD_ID="$(BU
+
  ccflags-y += -DCONFIG_NSS_NLIPV4=1
  ccflags-y += -DCONFIG_NSS_NLIPV6=1
 -ccflags-y += -DCONFIG_NSS_NLOAM=1
@@ -28,6 +32,7 @@
 -ccflags-y += -DCONFIG_NSS_NLMAP_T=1
 -ccflags-y += -DCONFIG_NSS_NLPPPOE=1
 -ccflags-y += -DCONFIG_NSS_NLL2TPV2=1
+-ccflags-y += -DCONFIG_NSS_NLQRFS=1
 -ccflags-y += -DCONFIG_NSS_NLPPTP=1
 +ccflags-y += -DCONFIG_NSS_NLMAP_T=0
 +ccflags-y += -DCONFIG_NSS_NLPPPOE=0
@@ -36,7 +41,8 @@
  ccflags-y += -DCONFIG_NSS_NLCAPWAP=${CAPWAP_ENABLED}
  ccflags-y += -DCONFIG_NSS_NLIPSEC=${IPSEC_ENABLED}
  ccflags-y += -DCONFIG_NSS_NLDTLS=${DTLS_ENABLED}
- 
+-ccflags-y += -DCONFIG_NSS_NLUDP_ST=1
+
  qca-nss-netlink-objs := nss_nl.o
 -qca-nss-netlink-objs += nss_nlgre_redir_family.o
 -qca-nss-netlink-objs += nss_nlgre_redir_cmd.o
@@ -60,6 +66,8 @@
 -qca-nss-netlink-objs += nss_nlpppoe.o
 -qca-nss-netlink-objs += nss_nll2tpv2.o
 -qca-nss-netlink-objs += nss_nlpptp.o
+-qca-nss-netlink-objs += nss_nludp_st.o
+-qca-nss-netlink-objs += nss_nlqrfs.o
 -
 +# qca-nss-netlink-objs += nss_nlmap_t.o
 +# qca-nss-netlink-objs += nss_nlpppoe.o
@@ -69,10 +77,10 @@
  ifneq (,$(filter $(capwapmgr), y))
  qca-nss-netlink-objs += nss_nlcapwap.o
  endif
-@@ -56,8 +52,12 @@ ifneq (,$(filter $(dtlsmgr), y))
+@@ -60,8 +52,12 @@ ifneq (,$(filter $(dtlsmgr), y))
  qca-nss-netlink-objs += nss_nldtls.o
  endif
- 
+
 -ifneq (,$(filter $(ipsecmgr), y))
 -qca-nss-netlink-objs += nss_nlipsec.o
 +ifneq (,$(filter $(gre), y))
@@ -82,10 +90,18 @@
 +qca-nss-netlink-objs += nss_nlgre_redir.o
 +qca-nss-netlink-objs += nss_nlgre_redir_lag.o
  endif
- 
+
  ifeq ($(SoC),$(filter $(SoC),ipq807x ipq807x_64))
 --- a/netlink/nss_nl.c
 +++ b/netlink/nss_nl.c
+@@ -1,6 +1,6 @@
+ /*
+  **************************************************************************
+- * Copyright (c) 2015-2016,2018-2021 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2015-2016,2018-2020 The Linux Foundation. All rights reserved.
+  * Permission to use, copy, modify, and/or distribute this software for
+  * any purpose with or without fee is hereby granted, provided that the
+  * above copyright notice and this permission notice appear in all copies.
 @@ -35,8 +35,6 @@
  #include "nss_nlcmn_if.h"
  #include "nss_nldtls.h"
@@ -106,7 +122,18 @@
  #include "nss_nlwifili.h"
  #include "nss_nlwifili_if.h"
  #include "nss_nllso_rx.h"
-@@ -106,24 +100,6 @@ static struct nss_nl_family family_handl
+@@ -75,10 +69,6 @@
+ #include "nss_nll2tpv2_if.h"
+ #include "nss_nlpptp.h"
+ #include "nss_nlpptp_if.h"
+-#include "nss_nludp_st.h"
+-#include "nss_nludp_st_if.h"
+-#include "nss_nlqrfs.h"
+-#include "nss_nlqrfs_if.h"
+
+ /*
+  * nss_nl.c
+@@ -110,24 +100,6 @@ static struct nss_nl_family family_handl
  	},
  	{
  		/*
@@ -131,7 +158,7 @@
  		 * NSS_NLIPV6
  		 */
  		.name = NSS_NLIPV6_FAMILY,		/* ipv6 */
-@@ -133,24 +109,6 @@ static struct nss_nl_family family_handl
+@@ -137,24 +109,6 @@ static struct nss_nl_family family_handl
  	},
  	{
  		/*
@@ -156,7 +183,7 @@
  		 * NSS_NLDTLS
  		 */
  		.name = NSS_NLDTLS_FAMILY,		/* dtls */
-@@ -169,15 +127,6 @@ static struct nss_nl_family family_handl
+@@ -173,15 +127,6 @@ static struct nss_nl_family family_handl
  	},
  	{
  		/*
@@ -172,7 +199,7 @@
  		 * NSS_NLDYNAMIC_INTERFACE
  		 */
  		.name = NSS_NLDYNAMIC_INTERFACE_FAMILY,	/* dynamic interface */
-@@ -196,42 +145,6 @@ static struct nss_nl_family family_handl
+@@ -200,42 +145,6 @@ static struct nss_nl_family family_handl
  	},
  	{
  		/*
@@ -215,7 +242,7 @@
  		 * NSS_NLWIFILI
  		 */
  		.name = NSS_NLWIFILI_FAMILY,		/* wifili */
-@@ -248,42 +161,6 @@ static struct nss_nl_family family_handl
+@@ -252,62 +161,6 @@ static struct nss_nl_family family_handl
  		.exit = NSS_NLLSO_RX_EXIT,		/* exit */
  		.valid = CONFIG_NSS_NLLSO_RX		/* 1 or 0 */
  	},
@@ -255,15 +282,35 @@
 -		.exit = NSS_NLPPTP_EXIT,		/* exit */
 -		.valid = CONFIG_NSS_NLPPTP		/* 1 or 0 */
 -	},
+-	{
+-                /*
+-                 * NSS_NLUDP_ST
+-                 */
+-                .name = NSS_NLUDP_ST_FAMILY,             /* udp_st */
+-                .entry = NSS_NLUDP_ST_INIT,              /* init */
+-                .exit = NSS_NLUDP_ST_EXIT,               /* exit */
+-                .valid = CONFIG_NSS_NLUDP_ST             /* 1 or 0 */
+-        },
+-	{
+-                /*
+-                 * NSS_NLQRFS
+-                 */
+-                .name = NSS_NLQRFS_FAMILY,             /* qrfs */
+-                .entry = NSS_NLQRFS_INIT,              /* init */
+-                .exit = NSS_NLQRFS_EXIT,               /* exit */
+-                .valid = CONFIG_NSS_NLQRFS             /* 1 or 0 */
+-        },
+-
+-
  };
- 
+
  #define NSS_NL_FAMILY_HANDLER_SZ ARRAY_SIZE(family_handlers)
 --- a/netlink/nss_nlipv4.c
 +++ b/netlink/nss_nlipv4.c
 @@ -336,20 +336,6 @@ static int nss_nlipv4_verify_conn_rule(s
  							tuple->return_ident, tuple->flow_ident);
  		break;
- 
+
 -	case NSS_NL_IFTYPE_TUNNEL_GRE:
 -		/*
 -		 * Currently this implementation is only for gre_redir
@@ -284,7 +331,7 @@
 @@ -396,17 +382,6 @@ static int nss_nlipv4_verify_conn_rule(s
  							tuple->return_ident, tuple->flow_ident);
  		break;
- 
+
 -	case NSS_NL_IFTYPE_TUNNEL_GRE:
 -		conn->return_interface_num = nss_nlgre_redir_cmd_get_ifnum(return_dev, tuple->protocol);
 -		if (conn->return_interface_num < 0 ) {
@@ -299,12 +346,78 @@
  	case NSS_NL_IFTYPE_VLAN:
  		conn->return_interface_num = nss_cmn_get_interface_number_by_dev(vlan_dev_real_dev(return_dev));
  		if (conn->return_interface_num < 0 ) {
+@@ -623,27 +598,6 @@ static int nss_nlipv4_verify_vlan_rule(s
+ }
+
+ /*
+- * nss_nlipv4_verify_identifier()
+- *	verify and override identifier rule entries
+- */
+-static int nss_nlipv4_verify_identifier(struct nss_ipv4_rule_create_msg *msg)
+-{
+-	struct nss_ipv4_identifier_rule *identifier = &msg->identifier;
+-	const size_t rule_sz = sizeof(struct nss_ipv4_identifier_rule);
+-	uint16_t valid;
+-
+-	/*
+-	 * if identifier is not valid, set identifier rule to 0
+-	 */
+-	valid = msg->valid_flags & NSS_IPV4_RULE_CREATE_IDENTIFIER_VALID;
+-	if (!valid) {
+-		memset(identifier, 0, rule_sz);
+-	}
+-
+-	return 0;
+-}
+-
+-/*
+  * nss_nlipv4_process_notify()
+  * 	process notification messages from NSS
+  */
+@@ -823,15 +777,6 @@ static int nss_nlipv4_ops_create_rule(st
+ 	}
+
+ 	/*
+-	 * check identifier
+-	 */
+-	error = nss_nlipv4_verify_identifier(&nim->msg.rule_create);
+-	if (error < 0) {
+-		nss_nl_error("%d:invalid identifier rule information passed\n", pid);
+-		goto done;
+-	}
+-
+-	/*
+ 	 * copy the NL message for response
+ 	 */
+ 	resp = nss_nl_copy_msg(skb);
+@@ -855,10 +800,6 @@ static int nss_nlipv4_ops_create_rule(st
+ 	 * Push Rule to NSS
+ 	 */
+ 	tx_status = nss_ipv4_tx_sync(gbl_ctx.nss, nim);
+-
+-	/* TODO: Handle the case where firmware has received the response
+-	 * and there is a failure in firmware.
+-	 */
+ 	if (tx_status != NSS_TX_SUCCESS) {
+ 		nss_nl_error("%d:unable to send IPv4 rule create, status(%d)\n", pid, tx_status);
+ 		error = -EBUSY;
+@@ -933,10 +874,6 @@ static int nss_nlipv4_ops_destroy_rule(s
+ 	 * Push rule to NSS
+ 	 */
+ 	tx_status = nss_ipv4_tx_sync(gbl_ctx.nss, nim);
+-
+-	/* TODO: Handle the case where firmware has received the response
+-	 * and there is a failure in firmware.
+-	 */
+ 	if (tx_status != NSS_TX_SUCCESS) {
+ 		nss_nl_error("%d:unable to send IPv4 rule delete, status(%d)\n", pid, tx_status);
+ 		return -EBUSY;
 --- a/netlink/nss_nlipv6.c
 +++ b/netlink/nss_nlipv6.c
 @@ -353,17 +353,6 @@ static int nss_nlipv6_verify_conn_rule(s
  							tuple->return_ident, tuple->flow_ident);
  		break;
- 
+
 -	case NSS_NL_IFTYPE_TUNNEL_GRE:
 -		conn->flow_interface_num = nss_nlgre_redir_cmd_get_ifnum(flow_dev, tuple->protocol);
 -		if (conn->flow_interface_num < 0 ) {
@@ -322,7 +435,7 @@
 @@ -411,17 +400,6 @@ static int nss_nlipv6_verify_conn_rule(s
  							tuple->return_ident, tuple->flow_ident);
  		break;
- 
+
 -	case NSS_NL_IFTYPE_TUNNEL_GRE:
 -		conn->return_interface_num = nss_nlgre_redir_cmd_get_ifnum(return_dev, tuple->protocol);
 -		if (conn->return_interface_num < 0 ) {
@@ -337,3 +450,69 @@
  	case NSS_NL_IFTYPE_VLAN:
  		conn->return_interface_num = nss_cmn_get_interface_number_by_dev(vlan_dev_real_dev(return_dev));
  		if (conn->return_interface_num < 0 ) {
+@@ -624,27 +602,6 @@ static int nss_nlipv6_verify_vlan_rule(s
+ }
+
+ /*
+- * nss_nlipv6_verify_identifier()
+- *	verify and override identifier rule entries
+- */
+-static int nss_nlipv6_verify_identifier(struct nss_ipv6_rule_create_msg *msg)
+-{
+-	struct nss_ipv6_identifier_rule *identifier = &msg->identifier;
+-	const size_t rule_sz = sizeof(struct nss_ipv6_identifier_rule);
+-	uint16_t valid;
+-
+-	/*
+-	 * if identifier is not valid, set identifier rule to 0
+-	 */
+-	valid = msg->valid_flags & NSS_IPV6_RULE_CREATE_IDENTIFIER_VALID;
+-	if (!valid) {
+-		memset(identifier, 0, rule_sz);
+-	}
+-
+-	return 0;
+-}
+-
+-/*
+  * nss_nlipv6_process_notify()
+  *	process notification messages from NSS
+  */
+@@ -817,15 +774,6 @@ static int nss_nlipv6_ops_create_rule(st
+ 	}
+
+ 	/*
+-	 * check identifier
+-	 */
+-	error = nss_nlipv6_verify_identifier(&nim->msg.rule_create);
+-	if (error < 0) {
+-		nss_nl_error("%d:invalid identifier rule information passed\n", pid);
+-		goto done;
+-	}
+-
+-	/*
+ 	 * copy the NL message for response
+ 	 */
+ 	resp = nss_nl_copy_msg(skb);
+@@ -855,10 +803,6 @@ static int nss_nlipv6_ops_create_rule(st
+ 	 * Push Rule to NSS
+ 	 */
+ 	tx_status = nss_ipv6_tx_sync(gbl_ctx.nss, nim);
+-
+-        /* TODO: Handle the case where firmware has received the response
+-	 * and there is a failure in firmware.
+-	 */
+ 	if (tx_status != NSS_TX_SUCCESS) {
+ 		nss_nl_error("%d:unable to send IPV6 rule create, status(%d)\n", pid, tx_status);
+ 		error = -EBUSY;
+@@ -938,10 +882,6 @@ static int nss_nlipv6_ops_destroy_rule(s
+ 	 * Push rule to NSS
+ 	 */
+ 	tx_status = nss_ipv6_tx_sync(gbl_ctx.nss, nim);
+-
+-        /* TODO: Handle the case where firmware has received the response
+-	 * and there is a failure in firmware.
+-	 */
+ 	if (tx_status != NSS_TX_SUCCESS) {
+ 		nss_nl_error("%d:unable to send IPV6 rule delete, status(%d)\n", pid, tx_status);
+ 		return -EBUSY;

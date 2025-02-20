@@ -1,0 +1,97 @@
+--- a/gre/nss_connmgr_gre.c
++++ b/gre/nss_connmgr_gre.c
+@@ -276,6 +276,8 @@ static struct rtnl_link_stats64 *nss_con
+ 		do {
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0))
+ 			start = u64_stats_fetch_begin_bh(&tstats->syncp);
++#elif (LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0))
++			start = u64_stats_fetch_begin(&tstats->syncp);
+ #else
+ 			start = u64_stats_fetch_begin_irq(&tstats->syncp);
+ #endif
+@@ -292,6 +294,8 @@ static struct rtnl_link_stats64 *nss_con
+ #endif
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0))
+ 		} while (u64_stats_fetch_retry_bh(&tstats->syncp, start));
++#elif (LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0))
++		} while (u64_stats_fetch_retry(&tstats->syncp, start));
+ #else
+ 		} while (u64_stats_fetch_retry_irq(&tstats->syncp, start));
+ #endif
+--- a/l2tp/l2tpv2/nss_connmgr_l2tpv2.c
++++ b/l2tp/l2tpv2/nss_connmgr_l2tpv2.c
+@@ -954,7 +954,11 @@ int __init nss_connmgr_l2tpv2_init_modul
+ 		return 0;
+ 	}
+ #endif
++#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0))
++       ctl_tbl_hdr = register_sysctl("dev/nss/l2tpv2", nss_connmgr_l2tpv2_table);
++#else
+ 	ctl_tbl_hdr = register_sysctl_table(nss_connmgr_l2tpv2_sysroot);
++#endif
+ 	if (!ctl_tbl_hdr) {
+ 		nss_connmgr_l2tpv2_info("Unable to register sysctl table for L2TP conn mgr\n");
+ 		return -EFAULT;
+--- a/mirror/nss_mirror_ctl.c
++++ b/mirror/nss_mirror_ctl.c
+@@ -16,6 +16,7 @@
+  ***************************************************************************
+  */
+
++#include <linux/version.h>
+ #include <linux/sysctl.h>
+ #include <linux/string.h>
+
+@@ -918,6 +919,7 @@ static struct ctl_table nss_mirror_table
+ 	{ }
+ };
+
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+ /*
+  * nss mirror dir
+  */
+@@ -953,6 +955,7 @@ static struct ctl_table nss_mirror_root[
+ 	},
+ 	{ }
+ };
++#endif
+
+ /*
+  * nss_mirror_ctl_register()
+@@ -960,7 +963,11 @@ static struct ctl_table nss_mirror_root[
+  */
+ int nss_mirror_ctl_register(void)
+ {
++#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0))
++	nss_mirror_ctl_header = register_sysctl("dev/nss/mirror", nss_mirror_table);
++#else
+ 	nss_mirror_ctl_header = register_sysctl_table(nss_mirror_root);
++#endif
+ 	if (!nss_mirror_ctl_header) {
+ 		nss_mirror_warn("Creating sysctl directory table header for mirror failed\n");
+ 		return -1;
+--- a/netlink/nss_nl.c
++++ b/netlink/nss_nl.c
+@@ -328,7 +328,11 @@ struct nss_nlcmn *nss_nl_get_msg(struct
+ 	/*
+ 	 * validate the common message header version & magic
+ 	 */
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+ 	cm = info->userhdr;
++#else
++	cm = genl_info_userhdr(info);
++#endif
+ 	if (nss_nlcmn_chk_ver(cm, family->version) == false) {
+ 		nss_nl_error("%d, %s: version mismatch (%d)\n", pid, family->name, cm->version);
+ 		return NULL;
+--- a/nss_qdisc/nss_wred.c
++++ b/nss_qdisc/nss_wred.c
+@@ -296,7 +296,7 @@ static int nss_wred_change(struct Qdisc
+
+ 	nim.msg.shaper_configure.config.msg.shaper_node_config.qos_tag = q->nq.qos_tag;
+ 	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.limit = qopt->limit;
+-	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.weight_mode = qopt->weight_mode;
++	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.weight_mode = (nss_shaper_config_wred_weight_mode_t)qopt->weight_mode;
+ 	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.weight_mode_value = qopt->weight_mode_value;
+ 	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.rap.min = qopt->rap.min;
+ 	nim.msg.shaper_configure.config.msg.shaper_node_config.snc.wred_param.rap.max = qopt->rap.max;
